@@ -12,6 +12,8 @@ import Schedule from "./pages/Schedule";
 import Features from "./pages/Features";
 import Pricing from "./pages/Pricing";
 import Enterprise from "./pages/Enterprise";
+import AdminLogin from "./pages/AdminLogin";
+import AdminDashboard from "./pages/AdminDashboard";
 
 
 function App() {
@@ -32,6 +34,8 @@ function App() {
         <Route element={<Features/>} path="/features"/>
         <Route element={<Pricing/>} path="/pricing"/>
         <Route element={<Enterprise/>} path="/enterprise"/>
+        <Route element={<AdminLogin/>} path="/admin/login"/>
+         <Route element={<AdminDashboard/>} path="/admin/dashboard"/>
     </Routes>
     </BrowserRouter>
     </AuthProvider>

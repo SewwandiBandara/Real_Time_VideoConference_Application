@@ -1,0 +1,95 @@
+CREATE DATABASE video_conferencing;
+
+USE video_conferencing;
+
+CREATE TABLE users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  email VARCHAR(100) UNIQUE NOT NULL,
+  password VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE meetings (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  room_id VARCHAR(50) UNIQUE NOT NULL,
+  host_id INT NOT NULL,
+  title VARCHAR(200),
+  description TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (host_id) REFERENCES users(id)
+);
+
+CREATE TABLE meeting_participants (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  meeting_id INT NOT NULL,
+  user_id INT NOT NULL,
+  joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  left_at TIMESTAMP NULL,
+  FOREIGN KEY (meeting_id) REFERENCES meetings(id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE shared_files (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  meeting_id INT NOT NULL,
+  user_id INT NOT NULL,
+  filename VARCHAR(255) NOT NULL,
+  file_path VARCHAR(500) NOT NULL,
+  file_size INT,
+  uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (meeting_id) REFERENCES meetings(id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Add the remote repository (replace with your URL)
+git remote add origin https://github.com/your-username/your-repo-name.git
+
+# Verify the remote was added
+git remote -v
+
+
+
+# Push to GitHub (main branch)
+git push -u origin main
+
+# If you're using an older version of Git that defaults to 'master':
+git push -u origin master
+
+
+
+
+http://localhost:5174/meeting/1
