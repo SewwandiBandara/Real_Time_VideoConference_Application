@@ -31,7 +31,7 @@ const Enterprise = () => {
     setSubmitMessage('');
 
     try {
-      const response = await fetch('http://localhost:5000/api/contact/sales', {
+      const response = await fetch('http://localhost:5001/api/contact/sales', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

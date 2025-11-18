@@ -19,36 +19,37 @@ const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    checkAdminAuth();
-    loadDashboardData();
-  }, []);
-
   const checkAdminAuth = () => {
     const token = localStorage.getItem('adminToken');
     const adminUser = localStorage.getItem('adminUser');
-    
+
     if (!token || !adminUser) {
       navigate('/admin/login');
       return;
     }
   };
 
+  useEffect(() => {
+    checkAdminAuth();
+    loadDashboardData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const loadDashboardData = async () => {
     try {
       const token = localStorage.getItem('adminToken');
-      
+
       const [statsRes, usersRes, meetingsRes, contactsRes] = await Promise.all([
-        fetch('http://localhost:5000/api/admin/stats', {
+        fetch('http://localhost:5001/api/admin/stats', {
           headers: { 'Authorization': `Bearer ${token}` }
         }),
-        fetch('http://localhost:5000/api/admin/users', {
+        fetch('http://localhost:5001/api/admin/users', {
           headers: { 'Authorization': `Bearer ${token}` }
         }),
-        fetch('http://localhost:5000/api/admin/meetings', {
+        fetch('http://localhost:5001/api/admin/meetings', {
           headers: { 'Authorization': `Bearer ${token}` }
         }),
-        fetch('http://localhost:5000/api/admin/contacts', {
+        fetch('http://localhost:5001/api/admin/contacts', {
           headers: { 'Authorization': `Bearer ${token}` }
         })
       ]);
@@ -57,7 +58,7 @@ const AdminDashboard = () => {
       if (usersRes.ok) setUsers((await usersRes.json()).users);
       if (meetingsRes.ok) setMeetings((await meetingsRes.json()).meetings);
       if (contactsRes.ok) setContacts((await contactsRes.json()).contacts);
-      
+
     } catch (error) {
       console.error('Error loading admin data:', error);
     } finally {
@@ -74,7 +75,7 @@ const AdminDashboard = () => {
   const updateContactStatus = async (contactId, status) => {
     try {
       const token = localStorage.getItem('adminToken');
-      const response = await fetch(`http://localhost:5000/api/admin/contacts/${contactId}/status`, {
+      const response = await fetch(`http://localhost:5001/api/admin/contacts/${contactId}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

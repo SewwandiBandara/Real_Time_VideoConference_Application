@@ -252,6 +252,7 @@ import { useAuth } from '../contexts/AuthContext';
 const Dashboard = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  // eslint-disable-next-line no-unused-vars
   const [activeTab, setActiveTab] = useState('overview');
   const [userStats, setUserStats] = useState({
     meetingsHosted: 0,
@@ -272,20 +273,20 @@ const Dashboard = () => {
   const fetchDashboardData = async () => {
     try {
       const token = localStorage.getItem('token');
-      
+
       // Fetch all data in parallel
       const [statsResponse, recentResponse, upcomingResponse] = await Promise.all([
-        fetch('http://localhost:5000/api/dashboard/stats', {
+        fetch('http://localhost:5001/api/dashboard/stats', {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         }),
-        fetch('http://localhost:5000/api/meetings/recent', {
+        fetch('http://localhost:5001/api/meetings/recent', {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         }),
-        fetch('http://localhost:5000/api/meetings/upcoming', {
+        fetch('http://localhost:5001/api/meetings/upcoming', {
           headers: {
             'Authorization': `Bearer ${token}`
           }

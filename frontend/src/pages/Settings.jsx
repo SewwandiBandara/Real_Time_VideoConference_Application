@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../contexts/AuthContext';
 import { 
@@ -18,7 +17,6 @@ import {
 } from 'react-icons/md';
 
 const Settings = () => {
-  const navigate = useNavigate();
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('profile');
   const [isEditing, setIsEditing] = useState(false);

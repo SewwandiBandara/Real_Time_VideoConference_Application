@@ -207,9 +207,9 @@ const AdminLogin = () => {
       }
     } catch (error) {
       console.error('❌ Admin login error:', error);
-      
+
       if (error.message.includes('Failed to fetch')) {
-        setError('Cannot connect to server. Please make sure the backend is running on port 5000.');
+        setError('Cannot connect to server. Please make sure the backend is running on port 5001.');
       } else if (error.message.includes('Server error')) {
         setError(error.message);
       } else {
@@ -224,10 +224,10 @@ const AdminLogin = () => {
   const testServerConnection = async () => {
     try {
       setError('Testing server connection...');
-      const response = await fetch('http://localhost:5000/api/health');
+      const response = await fetch('http://localhost:5001/api/health');
       const data = await response.json();
       setError(`Server is running: ${data.status}`);
-    } catch (error) {
+    } catch {
       setError('Server is not running. Please start the backend server.');
     }
   };

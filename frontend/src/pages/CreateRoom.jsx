@@ -31,7 +31,7 @@ const CreateRoom = () => {
 
     for (const endpoint of endpoints) {
       try {
-        const response = await fetch(`http://localhost:5000${endpoint}`, {
+        const response = await fetch(`http://localhost:5001${endpoint}`, {
           method: endpoint.includes('/meetings') ? 'POST' : 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -100,8 +100,8 @@ const CreateRoom = () => {
       for (const endpoint of endpoints) {
         try {
           console.log(`🔄 Trying endpoint: ${endpoint}`);
-          
-          const response = await fetch(`http://localhost:5000${endpoint}`, {
+
+          const response = await fetch(`http://localhost:5001${endpoint}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

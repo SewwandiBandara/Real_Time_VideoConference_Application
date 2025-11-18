@@ -1,101 +1,17 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const mysql = require('mysql2/promise');
+const connectDB = require('./config/database');
+const { User, Meeting, MeetingParticipant, SharedFile, ContactSubmission } = require('./models');
 
 const app = express();
 const server = http.createServer(app);
 
-// Database connection pool
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'videflow',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-};
-
-const pool = mysql.createPool(dbConfig);
-
-// Initialize Database Tables
-async function initializeDatabase() {
-  try {
-    const connection = await pool.getConnection();
-    
-    // Users table
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        company VARCHAR(255),
-        plan ENUM('free', 'pro') DEFAULT 'free',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Meetings table
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS meetings (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        title VARCHAR(255) NOT NULL,
-        description TEXT,
-        meeting_id VARCHAR(50) UNIQUE NOT NULL,
-        scheduled_time DATETIME,
-        duration INT DEFAULT 60,
-        max_participants INT DEFAULT 50,
-        status ENUM('scheduled', 'ongoing', 'completed', 'cancelled') DEFAULT 'scheduled',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      )
-    `);
-
-    // Participants table
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS participants (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        meeting_id VARCHAR(50) NOT NULL,
-        user_id INT NOT NULL,
-        user_name VARCHAR(255) NOT NULL,
-        user_email VARCHAR(255) NOT NULL,
-        joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        left_at TIMESTAMP NULL,
-        duration INT DEFAULT 0,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      )
-    `);
-
-    // Contact submissions table
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS contact_submissions (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        first_name VARCHAR(255) NOT NULL,
-        last_name VARCHAR(255) NOT NULL,
-        email VARCHAR(255) NOT NULL,
-        company VARCHAR(255) NOT NULL,
-        message TEXT,
-        submission_type ENUM('enterprise_sales', 'general') DEFAULT 'enterprise_sales',
-        status ENUM('new', 'contacted', 'closed') DEFAULT 'new',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      )
-    `);
-
-    console.log('✅ Database tables initialized successfully');
-    connection.release();
-  } catch (error) {
-    console.error('❌ Database initialization error:', error);
-  }
-}
+// Connect to MongoDB
+connectDB();
 
 // CORS configuration
 app.use(cors({
@@ -139,16 +55,13 @@ const authenticateToken = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    const [users] = await pool.execute(
-      'SELECT id, name, email, plan FROM users WHERE id = ?',
-      [decoded.userId]
-    );
-    
-    if (users.length === 0) {
+    const user = await User.findById(decoded.userId).select('name email plan');
+
+    if (!user) {
       return res.status(401).json({ error: 'User not found' });
     }
 
-    req.user = users[0];
+    req.user = user;
     next();
   } catch (error) {
     return res.status(403).json({ error: 'Invalid token' });
@@ -233,35 +146,39 @@ const authenticateAdmin = async (req, res, next) => {
 app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
   try {
     // Total users count
-    const [totalUsers] = await pool.execute('SELECT COUNT(*) as count FROM users');
-    
+    const totalUsers = await User.countDocuments();
+
     // Total meetings count
-    const [totalMeetings] = await pool.execute('SELECT COUNT(*) as count FROM meetings');
-    
+    const totalMeetings = await Meeting.countDocuments();
+
     // Total participants count
-    const [totalParticipants] = await pool.execute('SELECT COUNT(*) as count FROM participants');
-    
+    const totalParticipants = await MeetingParticipant.countDocuments();
+
     // Recent contact submissions
-    const [contactSubmissions] = await pool.execute('SELECT COUNT(*) as count FROM contact_submissions WHERE status = "new"');
-    
+    const pendingContacts = await ContactSubmission.countDocuments({ status: 'new' });
+
     // Plan distribution
-    const [planStats] = await pool.execute('SELECT plan, COUNT(*) as count FROM users GROUP BY plan');
-    
+    const planStats = await User.aggregate([
+      { $group: { _id: '$plan', count: { $sum: 1 } } }
+    ]);
+
     // Recent users (last 7 days)
-    const [recentUsers] = await pool.execute(
-      'SELECT COUNT(*) as count FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)'
-    );
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const recentUsers = await User.countDocuments({ created_at: { $gte: sevenDaysAgo } });
+
+    const planDistribution = planStats.reduce((acc, stat) => {
+      acc[stat._id] = stat.count;
+      return acc;
+    }, {});
 
     res.json({
-      totalUsers: totalUsers[0].count,
-      totalMeetings: totalMeetings[0].count,
-      totalParticipants: totalParticipants[0].count,
-      pendingContacts: contactSubmissions[0].count,
-      recentUsers: recentUsers[0].count,
-      planDistribution: planStats.reduce((acc, stat) => {
-        acc[stat.plan] = stat.count;
-        return acc;
-      }, {})
+      totalUsers,
+      totalMeetings,
+      totalParticipants,
+      pendingContacts,
+      recentUsers,
+      planDistribution
     });
   } catch (error) {
     console.error('❌ Admin stats error:', error);
@@ -272,12 +189,10 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
 // Get all users for admin
 app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
   try {
-    const [users] = await pool.execute(`
-      SELECT id, name, email, company, plan, created_at 
-      FROM users 
-      ORDER BY created_at DESC
-    `);
-    
+    const users = await User.find()
+      .select('name email company plan created_at')
+      .sort({ created_at: -1 });
+
     res.json({ users });
   } catch (error) {
     console.error('❌ Get admin users error:', error);
@@ -288,16 +203,44 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
 // Get all meetings for admin
 app.get('/api/admin/meetings', authenticateAdmin, async (req, res) => {
   try {
-    const [meetings] = await pool.execute(`
-      SELECT m.*, u.name as host_name, u.email as host_email,
-             COUNT(p.id) as participant_count
-      FROM meetings m
-      LEFT JOIN users u ON m.user_id = u.id
-      LEFT JOIN participants p ON m.meeting_id = p.meeting_id
-      GROUP BY m.id
-      ORDER BY m.created_at DESC
-    `);
-    
+    const meetings = await Meeting.aggregate([
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'host_id',
+          foreignField: '_id',
+          as: 'host'
+        }
+      },
+      {
+        $lookup: {
+          from: 'meetingparticipants',
+          localField: 'room_id',
+          foreignField: 'meeting_id',
+          as: 'participants'
+        }
+      },
+      {
+        $unwind: { path: '$host', preserveNullAndEmptyArrays: true }
+      },
+      {
+        $project: {
+          title: 1,
+          description: 1,
+          room_id: 1,
+          scheduled_time: 1,
+          duration: 1,
+          max_participants: 1,
+          status: 1,
+          created_at: 1,
+          host_name: '$host.name',
+          host_email: '$host.email',
+          participant_count: { $size: '$participants' }
+        }
+      },
+      { $sort: { created_at: -1 } }
+    ]);
+
     res.json({ meetings });
   } catch (error) {
     console.error('❌ Get admin meetings error:', error);
@@ -308,11 +251,8 @@ app.get('/api/admin/meetings', authenticateAdmin, async (req, res) => {
 // Get contact submissions for admin
 app.get('/api/admin/contacts', authenticateAdmin, async (req, res) => {
   try {
-    const [contacts] = await pool.execute(`
-      SELECT * FROM contact_submissions 
-      ORDER BY created_at DESC
-    `);
-    
+    const contacts = await ContactSubmission.find().sort({ created_at: -1 });
+
     res.json({ contacts });
   } catch (error) {
     console.error('❌ Get admin contacts error:', error);
@@ -330,12 +270,13 @@ app.put('/api/admin/contacts/:id/status', authenticateAdmin, async (req, res) =>
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    const [result] = await pool.execute(
-      'UPDATE contact_submissions SET status = ? WHERE id = ?',
-      [status, id]
+    const contact = await ContactSubmission.findByIdAndUpdate(
+      id,
+      { status },
+      { new: true }
     );
 
-    if (result.affectedRows === 0) {
+    if (!contact) {
       return res.status(404).json({ error: 'Contact submission not found' });
     }
 
@@ -351,10 +292,10 @@ app.put('/api/admin/contacts/:id/status', authenticateAdmin, async (req, res) =>
 // Test route
 app.get('/api/test', (req, res) => {
   console.log('✅ Test route accessed successfully');
-  res.json({ 
+  res.json({
     message: 'Backend server is running!',
     status: 'success',
-    database: 'MySQL connected',
+    database: 'MongoDB connected',
     timestamp: new Date().toISOString()
   });
 });
@@ -362,19 +303,18 @@ app.get('/api/test', (req, res) => {
 // Health check
 app.get('/api/health', async (req, res) => {
   try {
-    const connection = await pool.getConnection();
-    const [rows] = await connection.execute('SELECT 1 as test');
-    connection.release();
-    
-    res.json({ 
-      status: 'OK', 
+    const mongoose = require('mongoose');
+    const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
+
+    res.json({
+      status: 'OK',
       service: 'VideoFlow Backend',
-      database: 'Connected',
+      database: dbStatus,
       time: new Date().toISOString()
     });
   } catch (error) {
-    res.status(500).json({ 
-      status: 'ERROR', 
+    res.status(500).json({
+      status: 'ERROR',
       service: 'VideoFlow Backend',
       database: 'Connection failed',
       error: error.message
@@ -385,14 +325,14 @@ app.get('/api/health', async (req, res) => {
 // Contact Sales Form Submission
 app.post('/api/contact/sales', async (req, res) => {
   console.log('📧 Contact sales submission:', req.body);
-  
+
   try {
     const { firstName, lastName, email, company, message } = req.body;
 
     // Basic validation
     if (!firstName || !lastName || !email || !company) {
-      return res.status(400).json({ 
-        error: 'First name, last name, email, and company are required' 
+      return res.status(400).json({
+        error: 'First name, last name, email, and company are required'
       });
     }
 
@@ -403,57 +343,25 @@ app.post('/api/contact/sales', async (req, res) => {
     }
 
     // Insert into database
-    const [result] = await pool.execute(
-      `INSERT INTO contact_submissions (first_name, last_name, email, company, message, submission_type) 
-       VALUES (?, ?, ?, ?, ?, 'enterprise_sales')`,
-      [firstName, lastName, email, company, message || '']
-    );
+    const contact = await ContactSubmission.create({
+      first_name: firstName,
+      last_name: lastName,
+      email,
+      company,
+      message: message || '',
+      submission_type: 'enterprise_sales'
+    });
 
-    console.log('✅ Contact sales submission saved with ID:', result.insertId);
-    
+    console.log('✅ Contact sales submission saved with ID:', contact._id);
+
     res.status(201).json({
       message: 'Thank you for your interest! Our sales team will contact you shortly.',
-      submissionId: result.insertId
+      submissionId: contact._id
     });
   } catch (error) {
     console.error('❌ Contact sales submission error:', error);
-    res.status(500).json({ 
-      error: 'Failed to submit form. Please try again later.' 
-    });
-  }
-});
-
-
-// Test route
-app.get('/api/test', (req, res) => {
-  console.log('✅ Test route accessed successfully');
-  res.json({ 
-    message: 'Backend server is running!',
-    status: 'success',
-    database: 'MySQL connected',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Health check
-app.get('/api/health', async (req, res) => {
-  try {
-    const connection = await pool.getConnection();
-    const [rows] = await connection.execute('SELECT 1 as test');
-    connection.release();
-    
-    res.json({ 
-      status: 'OK', 
-      service: 'VideoFlow Backend',
-      database: 'Connected',
-      time: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      status: 'ERROR', 
-      service: 'VideoFlow Backend',
-      database: 'Connection failed',
-      error: error.message
+    res.status(500).json({
+      error: 'Failed to submit form. Please try again later.'
     });
   }
 });
@@ -461,7 +369,7 @@ app.get('/api/health', async (req, res) => {
 // Auth Routes
 app.post('/api/auth/signup', async (req, res) => {
   console.log('📝 Signup request:', req.body);
-  
+
   try {
     const { name, email, password, company, plan } = req.body;
 
@@ -469,39 +377,37 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ error: 'Name, email, and password are required' });
     }
 
-    const [existingUsers] = await pool.execute(
-      'SELECT id FROM users WHERE email = ?',
-      [email]
-    );
+    const existingUser = await User.findOne({ email });
 
-    if (existingUsers.length > 0) {
+    if (existingUser) {
       return res.status(400).json({ error: 'User already exists with this email' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    const [result] = await pool.execute(
-      'INSERT INTO users (name, email, password, company, plan) VALUES (?, ?, ?, ?, ?)',
-      [name, email, hashedPassword, company, plan || 'free']
-    );
+    const user = await User.create({
+      name,
+      email,
+      password,
+      company,
+      plan: plan || 'free'
+    });
 
     const token = jwt.sign(
-      { userId: result.insertId, email: email },
+      { userId: user._id, email: user.email },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
 
-    console.log('✅ User created successfully with ID:', result.insertId);
-    
+    console.log('✅ User created successfully with ID:', user._id);
+
     res.status(201).json({
       message: 'User created successfully',
       token,
       user: {
-        id: result.insertId,
-        name,
-        email,
-        company,
-        plan: plan || 'free'
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        company: user.company,
+        plan: user.plan
       }
     });
   } catch (error) {
@@ -512,7 +418,7 @@ app.post('/api/auth/signup', async (req, res) => {
 
 app.post('/api/auth/signin', async (req, res) => {
   console.log('🔑 Signin request:', req.body);
-  
+
   try {
     const { email, password } = req.body;
 
@@ -520,35 +426,30 @@ app.post('/api/auth/signin', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const [users] = await pool.execute(
-      'SELECT * FROM users WHERE email = ?',
-      [email]
-    );
+    const user = await User.findOne({ email }).select('+password');
 
-    if (users.length === 0) {
+    if (!user) {
       return res.status(400).json({ error: 'Invalid email or password' });
     }
 
-    const user = users[0];
-
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
       return res.status(400).json({ error: 'Invalid email or password' });
     }
 
     const token = jwt.sign(
-      { userId: user.id, email: user.email },
+      { userId: user._id, email: user.email },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
 
     console.log('✅ User signed in successfully:', user.email);
-    
+
     res.json({
       message: 'Sign in successful',
       token,
       user: {
-        id: user.id,
+        id: user._id,
         name: user.name,
         email: user.email,
         company: user.company,
@@ -566,33 +467,22 @@ app.post('/api/auth/demo', async (req, res) => {
     const demoEmail = 'demo@videflow.com';
     const demoPassword = 'demo123';
 
-    const [users] = await pool.execute(
-      'SELECT id, name, email, plan FROM users WHERE email = ?',
-      [demoEmail]
-    );
+    let user = await User.findOne({ email: demoEmail });
 
-    let user;
-    if (users.length === 0) {
-      const hashedPassword = await bcrypt.hash(demoPassword, 12);
-      const [result] = await pool.execute(
-        'INSERT INTO users (name, email, password, plan) VALUES (?, ?, ?, ?)',
-        ['Demo User', demoEmail, hashedPassword, 'pro']
-      );
-      
-      user = {
-        id: result.insertId,
+    if (!user) {
+      user = await User.create({
         name: 'Demo User',
         email: demoEmail,
+        password: demoPassword,
         plan: 'pro'
-      };
+      });
       console.log('✅ Demo user created');
     } else {
-      user = users[0];
       console.log('✅ Demo user found');
     }
 
     const token = jwt.sign(
-      { userId: user.id, email: user.email },
+      { userId: user._id, email: user.email },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -600,10 +490,33 @@ app.post('/api/auth/demo', async (req, res) => {
     res.json({
       message: 'Demo login successful',
       token,
-      user: user
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        plan: user.plan
+      }
     });
   } catch (error) {
     console.error('❌ Demo login error:', error);
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
+  }
+});
+
+// Get user profile (for token verification)
+app.get('/api/user/profile', authenticateToken, async (req, res) => {
+  try {
+    res.json({
+      user: {
+        id: req.user._id,
+        name: req.user.name,
+        email: req.user.email,
+        company: req.user.company,
+        plan: req.user.plan
+      }
+    });
+  } catch (error) {
+    console.error('❌ Get user profile error:', error);
     res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
@@ -612,36 +525,42 @@ app.post('/api/auth/demo', async (req, res) => {
 // Create a new meeting
 app.post('/api/meetings', authenticateToken, async (req, res) => {
   console.log('📅 Creating meeting:', req.body);
-  
+
   try {
     const { title, description, scheduled_time, duration, max_participants } = req.body;
-    
+
     if (!title) {
       return res.status(400).json({ error: 'Meeting title is required' });
     }
 
     // Generate unique meeting ID
-    const meetingId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    const roomId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
-    const [result] = await pool.execute(
-      `INSERT INTO meetings (user_id, title, description, meeting_id, scheduled_time, duration, max_participants) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [req.user.id, title, description, meetingId, scheduled_time, duration || 60, max_participants || 50]
-    );
+    const meeting = await Meeting.create({
+      host_id: req.user._id,
+      room_id: roomId,
+      title,
+      description,
+      scheduled_time,
+      duration: duration || 60,
+      max_participants: max_participants || 50,
+      status: 'scheduled'
+    });
 
-    console.log('✅ Meeting created successfully with ID:', meetingId);
-    
+    console.log('✅ Meeting created successfully with ID:', roomId);
+
     res.status(201).json({
       message: 'Meeting created successfully',
       meeting: {
-        id: result.insertId,
-        meeting_id: meetingId,
-        title,
-        description,
-        scheduled_time,
-        duration: duration || 60,
-        max_participants: max_participants || 50,
-        status: 'scheduled'
+        id: meeting._id,
+        meeting_id: roomId,
+        room_id: roomId,
+        title: meeting.title,
+        description: meeting.description,
+        scheduled_time: meeting.scheduled_time,
+        duration: meeting.duration,
+        max_participants: meeting.max_participants,
+        status: meeting.status
       }
     });
   } catch (error) {
@@ -653,16 +572,33 @@ app.post('/api/meetings', authenticateToken, async (req, res) => {
 // Get user's recent meetings (completed)
 app.get('/api/meetings/recent', authenticateToken, async (req, res) => {
   try {
-    const [meetings] = await pool.execute(
-      `SELECT m.*, COUNT(p.id) as participant_count 
-       FROM meetings m 
-       LEFT JOIN participants p ON m.meeting_id = p.meeting_id 
-       WHERE m.user_id = ? AND m.status = 'completed' 
-       GROUP BY m.id 
-       ORDER BY m.created_at DESC 
-       LIMIT 5`,
-      [req.user.id]
-    );
+    const meetings = await Meeting.aggregate([
+      {
+        $match: {
+          host_id: req.user._id,
+          status: 'completed'
+        }
+      },
+      {
+        $lookup: {
+          from: 'meetingparticipants',
+          localField: 'room_id',
+          foreignField: 'meeting_id',
+          as: 'participants'
+        }
+      },
+      {
+        $addFields: {
+          participant_count: { $size: '$participants' }
+        }
+      },
+      {
+        $sort: { created_at: -1 }
+      },
+      {
+        $limit: 5
+      }
+    ]);
 
     res.json({ meetings });
   } catch (error) {
@@ -674,13 +610,13 @@ app.get('/api/meetings/recent', authenticateToken, async (req, res) => {
 // Get user's upcoming meetings
 app.get('/api/meetings/upcoming', authenticateToken, async (req, res) => {
   try {
-    const [meetings] = await pool.execute(
-      `SELECT * FROM meetings 
-       WHERE user_id = ? AND status = 'scheduled' AND scheduled_time > NOW() 
-       ORDER BY scheduled_time ASC 
-       LIMIT 5`,
-      [req.user.id]
-    );
+    const meetings = await Meeting.find({
+      host_id: req.user._id,
+      status: 'scheduled',
+      scheduled_time: { $gt: new Date() }
+    })
+      .sort({ scheduled_time: 1 })
+      .limit(5);
 
     res.json({ meetings });
   } catch (error) {
@@ -693,38 +629,47 @@ app.get('/api/meetings/upcoming', authenticateToken, async (req, res) => {
 app.get('/api/dashboard/stats', authenticateToken, async (req, res) => {
   try {
     // Total meetings hosted
-    const [totalMeetings] = await pool.execute(
-      'SELECT COUNT(*) as count FROM meetings WHERE user_id = ?',
-      [req.user.id]
-    );
+    const totalMeetings = await Meeting.countDocuments({ host_id: req.user._id });
+
+    // Get user's meeting ObjectIds
+    const userMeetings = await Meeting.find({ host_id: req.user._id }).select('_id');
+    const meetingIds = userMeetings.map(m => m._id);
 
     // Total participants across all meetings
-    const [totalParticipants] = await pool.execute(
-      `SELECT COUNT(DISTINCT p.id) as count 
-       FROM participants p 
-       JOIN meetings m ON p.meeting_id = m.meeting_id 
-       WHERE m.user_id = ?`,
-      [req.user.id]
-    );
+    const totalParticipants = await MeetingParticipant.countDocuments({
+      meeting_id: { $in: meetingIds }
+    });
 
     // Average meeting duration
-    const [avgDuration] = await pool.execute(
-      `SELECT AVG(duration) as average FROM meetings WHERE user_id = ? AND status = 'completed'`,
-      [req.user.id]
-    );
+    const avgResult = await Meeting.aggregate([
+      {
+        $match: {
+          host_id: req.user._id,
+          status: 'completed'
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          average: { $avg: '$duration' }
+        }
+      }
+    ]);
+
+    const avgDuration = avgResult.length > 0 ? Math.round(avgResult[0].average || 0) : 0;
 
     // Upcoming meetings count
-    const [upcomingCount] = await pool.execute(
-      `SELECT COUNT(*) as count FROM meetings 
-       WHERE user_id = ? AND status = 'scheduled' AND scheduled_time > NOW()`,
-      [req.user.id]
-    );
+    const upcomingCount = await Meeting.countDocuments({
+      host_id: req.user._id,
+      status: 'scheduled',
+      scheduled_time: { $gt: new Date() }
+    });
 
     res.json({
-      meetingsHosted: totalMeetings[0].count,
-      totalParticipants: totalParticipants[0].count,
-      averageDuration: Math.round(avgDuration[0].average || 0) + 'min',
-      upcomingMeetings: upcomingCount[0].count
+      meetingsHosted: totalMeetings,
+      totalParticipants,
+      averageDuration: avgDuration + 'min',
+      upcomingMeetings: upcomingCount
     });
   } catch (error) {
     console.error('❌ Get dashboard stats error:', error);
@@ -738,28 +683,25 @@ app.post('/api/meetings/:meetingId/join', authenticateToken, async (req, res) =>
     const { meetingId } = req.params;
 
     // Check if meeting exists
-    const [meetings] = await pool.execute(
-      'SELECT * FROM meetings WHERE meeting_id = ?',
-      [meetingId]
-    );
+    const meeting = await Meeting.findOne({ room_id: meetingId });
 
-    if (meetings.length === 0) {
+    if (!meeting) {
       return res.status(404).json({ error: 'Meeting not found' });
     }
 
-    const meeting = meetings[0];
-
     // Add participant
-    await pool.execute(
-      'INSERT INTO participants (meeting_id, user_id, user_name, user_email) VALUES (?, ?, ?, ?)',
-      [meetingId, req.user.id, req.user.name, req.user.email]
-    );
+    await MeetingParticipant.create({
+      meeting_id: meeting._id,
+      user_id: req.user._id,
+      user_name: req.user.name,
+      user_email: req.user.email
+    });
 
-    res.json({ 
+    res.json({
       message: 'Joined meeting successfully',
       meeting: {
         title: meeting.title,
-        meeting_id: meeting.meeting_id
+        meeting_id: meeting.room_id
       }
     });
   } catch (error) {
@@ -771,10 +713,8 @@ app.post('/api/meetings/:meetingId/join', authenticateToken, async (req, res) =>
 // Get all users (for testing)
 app.get('/api/users', async (req, res) => {
   try {
-    const [users] = await pool.execute(
-      'SELECT id, name, email, plan, created_at FROM users'
-    );
-    
+    const users = await User.find().select('name email plan created_at');
+
     res.json({ users });
   } catch (error) {
     console.error('❌ Get users error:', error);
@@ -782,17 +722,38 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
+// 404 handler for API routes - must come after all other routes
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({
+      error: 'API endpoint not found',
+      path: req.originalUrl,
+      method: req.method
+    });
+  }
+  next();
+});
 
-// Initialize database and start server
-initializeDatabase().then(() => {
-  const PORT = process.env.PORT || 5001; // Changed to 5001 to avoid conflicts
-  server.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📍 Test URL: http://localhost:${PORT}/api/test`);
-    console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
-    console.log(`📍 Admin test: http://localhost:${PORT}/api/admin/test`);
-    console.log(`📍 CORS enabled for: http://localhost:3000, http://localhost:5174`);
-  });
-}).catch(error => {
-  console.error('❌ Failed to start server:', error);
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('❌ Global error:', err);
+
+  // Always return JSON for API routes
+  if (req.path.startsWith('/api')) {
+    res.status(err.status || 500).json({
+      error: err.message || 'Internal server error',
+      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    });
+  } else {
+    res.status(err.status || 500).send(err.message || 'Internal server error');
+  }
+});
+
+// Start server
+const PORT = process.env.PORT || 5001;
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📍 Test URL: http://localhost:${PORT}/api/test`);
+  console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`📍 CORS enabled for: http://localhost:3000, http://localhost:5174`);
 });
