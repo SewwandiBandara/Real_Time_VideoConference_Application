@@ -12,6 +12,8 @@ const SignUp = () => {
     company: '',
     plan: 'free'
   });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const navigate = useNavigate();
   const { signUp } = useAuth();
 
@@ -22,18 +24,19 @@ const SignUp = () => {
     });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // Simulate user data - in real app, this would come from your backend
-    const userData = {
-      name: formData.name,
-      email: formData.email,
-      id: Date.now().toString()
-    };
-    
-    signUp(userData);
-    alert('Account created successfully! Welcome to VideoFlow.');
-    navigate('/dashboard');
+    setError('');
+    setLoading(true);
+
+    const result = await signUp(formData.name, formData.email, formData.password);
+
+    if (result.success) {
+      navigate('/dashboard');
+    } else {
+      setError(result.error);
+      setLoading(false);
+    }
   };
 
   const features = [
@@ -59,6 +62,12 @@ const SignUp = () => {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
             {/* Signup Form */}
             <div className="bg-white rounded-2xl shadow-xl p-8">
+              {error && (
+                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                  {error}
+                </div>
+              )}
+
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -149,9 +158,10 @@ const SignUp = () => {
 
                 <button
                   type="submit"
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-all duration-300 transform hover:scale-105"
+                  disabled={loading}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Start Free Trial
+                  {loading ? 'Creating Account...' : 'Start Free Trial'}
                 </button>
 
                 <p className="text-center text-gray-600 text-sm">

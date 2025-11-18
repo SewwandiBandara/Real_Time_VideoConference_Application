@@ -22,27 +22,36 @@ const SignIn = () => {
     }));
   };
 
-  const handleSubmit = (e) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // Simulate user data - in real app, this would come from your backend
-    const userData = {
-      name: 'John Doe',
-      email: formData.email,
-      id: '1'
-    };
-    
-    signIn(userData);
-    alert('Successfully signed in!');
-    navigate('/dashboard');
+    setError('');
+    setLoading(true);
+
+    const result = await signIn(formData.email, formData.password);
+
+    if (result.success) {
+      navigate('/dashboard');
+    } else {
+      setError(result.error);
+      setLoading(false);
+    }
   };
 
-  const handleDemoLogin = () => {
-    // Demo login for testing
-    setFormData({
-      email: 'demo@videflow.com',
-      password: 'demo123',
-      rememberMe: false
-    });
+  const handleDemoLogin = async () => {
+    setError('');
+    setLoading(true);
+
+    const result = await signIn('demo@videoflow.com', 'demo123');
+
+    if (result.success) {
+      navigate('/dashboard');
+    } else {
+      setError(result.error);
+      setLoading(false);
+    }
   };
 
   return (
@@ -57,6 +66,12 @@ const SignIn = () => {
           </div>
 
           <div className="bg-white rounded-2xl shadow-xl p-8">
+            {error && (
+              <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                {error}
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} className="space-y-6">
               {/* Email Field */}
               <div>
@@ -137,18 +152,20 @@ const SignIn = () => {
               {/* Sign In Button */}
               <button
                 type="submit"
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-md"
+                disabled={loading}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Sign In
+                {loading ? 'Signing In...' : 'Sign In'}
               </button>
 
               {/* Demo Login Button */}
               <button
                 type="button"
                 onClick={handleDemoLogin}
-                className="w-full bg-gray-600 hover:bg-gray-700 text-white font-semibold py-3 px-4 rounded-lg transition-all duration-300 transform hover:scale-105"
+                disabled={loading}
+                className="w-full bg-gray-600 hover:bg-gray-700 text-white font-semibold py-3 px-4 rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Try Demo Account
+                {loading ? 'Loading...' : 'Try Demo Account'}
               </button>
             </form>
 
