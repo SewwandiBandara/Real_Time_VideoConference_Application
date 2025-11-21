@@ -4,11 +4,27 @@ const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
 const jwt = require('jsonwebtoken');
+const socketIO = require('socket.io');
 const connectDB = require('./config/database');
 const { User, Meeting, MeetingParticipant, SharedFile, ContactSubmission } = require('./models');
 
 const app = express();
 const server = http.createServer(app);
+
+// Socket.IO configuration
+const io = socketIO(server, {
+  cors: {
+    origin: [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'http://127.0.0.1:5173',
+      'http://127.0.0.1:5174'
+    ],
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
+});
 
 // Connect to MongoDB
 connectDB();
@@ -749,6 +765,171 @@ app.use((err, req, res, next) => {
   }
 });
 
+// ==================== SOCKET.IO SIGNALING ====================
+
+// Store active rooms and their participants
+const rooms = new Map();
+
+io.on('connection', (socket) => {
+  console.log('🔌 New socket connection:', socket.id);
+
+  // Join a meeting room
+  socket.on('join-room', ({ roomId, userId, userName }) => {
+    console.log(`👤 ${userName} (${userId}) joining room ${roomId}`);
+
+    socket.join(roomId);
+
+    // Initialize room if it doesn't exist
+    if (!rooms.has(roomId)) {
+      rooms.set(roomId, new Map());
+    }
+
+    const room = rooms.get(roomId);
+
+    // Store user info
+    room.set(socket.id, {
+      userId,
+      userName,
+      socketId: socket.id
+    });
+
+    // Get all other participants in the room
+    const otherParticipants = Array.from(room.values()).filter(
+      p => p.socketId !== socket.id
+    );
+
+    // Notify the new user about existing participants
+    socket.emit('existing-participants', otherParticipants);
+
+    // Notify other participants about the new user
+    socket.to(roomId).emit('user-joined', {
+      userId,
+      userName,
+      socketId: socket.id
+    });
+
+    console.log(`✅ Room ${roomId} now has ${room.size} participants`);
+  });
+
+  // WebRTC signaling: offer
+  socket.on('offer', ({ offer, to, from, userName }) => {
+    console.log(`📤 Sending offer from ${from} to ${to}`);
+    io.to(to).emit('offer', {
+      offer,
+      from,
+      userName
+    });
+  });
+
+  // WebRTC signaling: answer
+  socket.on('answer', ({ answer, to, from }) => {
+    console.log(`📤 Sending answer from ${from} to ${to}`);
+    io.to(to).emit('answer', {
+      answer,
+      from
+    });
+  });
+
+  // WebRTC signaling: ICE candidate
+  socket.on('ice-candidate', ({ candidate, to, from }) => {
+    console.log(`📤 Sending ICE candidate from ${from} to ${to}`);
+    io.to(to).emit('ice-candidate', {
+      candidate,
+      from
+    });
+  });
+
+  // Chat message
+  socket.on('chat-message', ({ roomId, message, userName, userId }) => {
+    console.log(`💬 Chat message in room ${roomId} from ${userName}`);
+    io.to(roomId).emit('chat-message', {
+      message,
+      userName,
+      userId,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // Toggle audio/video
+  socket.on('toggle-media', ({ roomId, type, enabled }) => {
+    socket.to(roomId).emit('user-media-toggle', {
+      socketId: socket.id,
+      type,
+      enabled
+    });
+  });
+
+  // Screen sharing
+  socket.on('start-screen-share', ({ roomId, userId, userName }) => {
+    console.log(`🖥️ ${userName} started screen sharing in room ${roomId}`);
+    socket.to(roomId).emit('user-started-screen-share', {
+      userId,
+      userName,
+      socketId: socket.id
+    });
+  });
+
+  socket.on('stop-screen-share', ({ roomId, userId }) => {
+    console.log(`🖥️ User ${userId} stopped screen sharing in room ${roomId}`);
+    socket.to(roomId).emit('user-stopped-screen-share', {
+      userId,
+      socketId: socket.id
+    });
+  });
+
+  // Handle disconnection
+  socket.on('disconnect', () => {
+    console.log('❌ Socket disconnected:', socket.id);
+
+    // Find and remove user from all rooms
+    rooms.forEach((participants, roomId) => {
+      if (participants.has(socket.id)) {
+        const user = participants.get(socket.id);
+        participants.delete(socket.id);
+
+        // Notify other participants
+        socket.to(roomId).emit('user-left', {
+          socketId: socket.id,
+          userId: user.userId,
+          userName: user.userName
+        });
+
+        console.log(`👋 ${user.userName} left room ${roomId}`);
+
+        // Clean up empty rooms
+        if (participants.size === 0) {
+          rooms.delete(roomId);
+          console.log(`🗑️ Room ${roomId} removed (empty)`);
+        }
+      }
+    });
+  });
+
+  // Explicit leave room
+  socket.on('leave-room', ({ roomId }) => {
+    console.log(`👋 Socket ${socket.id} leaving room ${roomId}`);
+
+    const room = rooms.get(roomId);
+    if (room && room.has(socket.id)) {
+      const user = room.get(socket.id);
+      room.delete(socket.id);
+
+      socket.to(roomId).emit('user-left', {
+        socketId: socket.id,
+        userId: user.userId,
+        userName: user.userName
+      });
+
+      socket.leave(roomId);
+
+      if (room.size === 0) {
+        rooms.delete(roomId);
+        console.log(`🗑️ Room ${roomId} removed (empty)`);
+      }
+    }
+  });
+});
+
 // Start server
 const PORT = process.env.PORT || 5001;
 server.listen(PORT, () => {
@@ -756,4 +937,5 @@ server.listen(PORT, () => {
   console.log(`📍 Test URL: http://localhost:${PORT}/api/test`);
   console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
   console.log(`📍 CORS enabled for: http://localhost:3000, http://localhost:5174`);
+  console.log(`🔌 Socket.IO ready for WebRTC signaling`);
 });
