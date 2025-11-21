@@ -1,4 +1,6 @@
 import { BrowserRouter,Routes,Route} from "react-router-dom";
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider } from "./contexts/AuthContext";
 import Home from "./pages/Home";
 import SignUp from './pages/SignUp';
@@ -14,10 +16,11 @@ import Pricing from "./pages/Pricing";
 import Enterprise from "./pages/Enterprise";
 import AdminLogin from "./pages/AdminLogin";
 import AdminDashboard from "./pages/AdminDashboard";
+import VideoRoom from "./pages/VideoRoom";
 
 
 function App() {
-  
+
   return (
      <AuthProvider>
     <BrowserRouter>
@@ -35,11 +38,13 @@ function App() {
         <Route element={<Pricing/>} path="/pricing"/>
         <Route element={<Enterprise/>} path="/enterprise"/>
         <Route element={<AdminLogin/>} path="/admin/login"/>
-         <Route element={<AdminDashboard/>} path="/admin/dashboard"/>
+        <Route element={<AdminDashboard/>} path="/admin/dashboard"/>
+        <Route element={<VideoRoom/>} path="/meeting/:meetingId"/>
     </Routes>
+    <ToastContainer position="top-right" autoClose={3000} />
     </BrowserRouter>
     </AuthProvider>
-   
+
   );
 }
 
