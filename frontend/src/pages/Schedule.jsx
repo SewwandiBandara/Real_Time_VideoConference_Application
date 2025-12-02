@@ -1,11 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { MdCalendarToday, MdAccessTime, MdGroup, MdVideoCall, MdArrowBack } from 'react-icons/md';
+import { MdCalendarToday, MdAccessTime, MdGroup, MdVideoCall, MdArrowBack, MdDelete } from 'react-icons/md';
+import API_BASE_URL from '../config/api';
 
 const Schedule = () => {
   const navigate = useNavigate();
   const [scheduledMeetings, setScheduledMeetings] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [fetchingMeetings, setFetchingMeetings] = useState(true);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -17,6 +20,39 @@ const Schedule = () => {
     description: ''
   });
 
+  // Fetch scheduled meetings on component mount
+  useEffect(() => {
+    fetchScheduledMeetings();
+  }, []);
+
+  const fetchScheduledMeetings = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.log('No token found, skipping fetch');
+        setFetchingMeetings(false);
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/meetings/scheduled`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setScheduledMeetings(data.meetings || []);
+      } else {
+        console.error('Failed to fetch scheduled meetings');
+      }
+    } catch (error) {
+      console.error('Error fetching scheduled meetings:', error);
+    } finally {
+      setFetchingMeetings(false);
+    }
+  };
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({
@@ -25,7 +61,7 @@ const Schedule = () => {
     }));
   };
 
-  const handleScheduleMeeting = (e) => {
+  const handleScheduleMeeting = async (e) => {
     e.preventDefault();
     
     if (!formData.title || !formData.date || !formData.time) {
@@ -33,26 +69,60 @@ const Schedule = () => {
       return;
     }
 
-    const newMeeting = {
-      id: Date.now(),
-      ...formData,
-      status: 'scheduled',
-      meetingId: `MTG${Date.now().toString().slice(-6)}`
-    };
+    setLoading(true);
 
-    setScheduledMeetings(prev => [newMeeting, ...prev]);
-    
-    // Reset form
-    setFormData({
-      title: '',
-      date: '',
-      time: '',
-      duration: '30',
-      participants: '',
-      description: ''
-    });
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        alert('Please sign in to schedule meetings');
+        navigate('/signin');
+        return;
+      }
 
-    alert('Meeting scheduled successfully!');
+      // Combine date and time into ISO string
+      const scheduledDateTime = new Date(`${formData.date}T${formData.time}`).toISOString();
+
+      const response = await fetch(`${API_BASE_URL}/api/meetings/schedule`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          title: formData.title,
+          description: formData.description,
+          scheduled_time: scheduledDateTime,
+          duration: parseInt(formData.duration),
+          max_participants: formData.participants ? parseInt(formData.participants) : 50
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        alert('Meeting scheduled successfully!');
+        
+        // Reset form
+        setFormData({
+          title: '',
+          date: '',
+          time: '',
+          duration: '30',
+          participants: '',
+          description: ''
+        });
+
+        // Refresh the list of scheduled meetings
+        fetchScheduledMeetings();
+      } else {
+        alert(data.error || 'Failed to schedule meeting');
+      }
+    } catch (error) {
+      console.error('Error scheduling meeting:', error);
+      alert('Failed to schedule meeting. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const copyMeetingLink = (meetingId) => {
@@ -61,17 +131,52 @@ const Schedule = () => {
     alert('Meeting link copied to clipboard!');
   };
 
-  const startScheduledMeeting = (meeting) => {
-    navigate('/createroom', { 
-      state: { 
-        scheduledMeeting: meeting 
-      } 
-    });
+  const startScheduledMeeting = async (meeting) => {
+    try {
+      const token = localStorage.getItem('token');
+      
+      // Mark meeting as started
+      await fetch(`${API_BASE_URL}/api/meetings/schedule/${meeting.room_id}/start`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      // Navigate to the meeting room
+      navigate(`/meeting/${meeting.room_id}`);
+    } catch (error) {
+      console.error('Error starting meeting:', error);
+      // Still navigate even if the status update fails
+      navigate(`/meeting/${meeting.room_id}`);
+    }
   };
 
-  const deleteScheduledMeeting = (meetingId) => {
-    if (window.confirm('Are you sure you want to delete this scheduled meeting?')) {
-      setScheduledMeetings(prev => prev.filter(meeting => meeting.id !== meetingId));
+  const deleteScheduledMeeting = async (meetingId) => {
+    if (!window.confirm('Are you sure you want to delete this scheduled meeting?')) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/meetings/schedule/${meetingId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        alert('Meeting deleted successfully');
+        // Refresh the list
+        fetchScheduledMeetings();
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Failed to delete meeting');
+      }
+    } catch (error) {
+      console.error('Error deleting meeting:', error);
+      alert('Failed to delete meeting. Please try again.');
     }
   };
 
@@ -83,6 +188,13 @@ const Schedule = () => {
       day: 'numeric' 
     };
     return new Date(dateString).toLocaleDateString('en-US', options);
+  };
+
+  const formatTime = (dateString) => {
+    return new Date(dateString).toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
   return (
@@ -201,6 +313,7 @@ const Schedule = () => {
                           onChange={handleInputChange}
                           placeholder="Number of participants"
                           min="1"
+                          max="1000"
                           className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
@@ -226,10 +339,20 @@ const Schedule = () => {
                   <div className="mt-6">
                     <button
                       type="submit"
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg font-semibold transition-colors duration-300 flex items-center justify-center"
+                      disabled={loading}
+                      className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white py-3 px-4 rounded-lg font-semibold transition-colors duration-300 flex items-center justify-center"
                     >
-                      <MdVideoCall className="w-5 h-5 mr-2" />
-                      Schedule Meeting
+                      {loading ? (
+                        <>
+                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                          Scheduling...
+                        </>
+                      ) : (
+                        <>
+                          <MdVideoCall className="w-5 h-5 mr-2" />
+                          Schedule Meeting
+                        </>
+                      )}
                     </button>
                   </div>
                 </form>
@@ -247,7 +370,12 @@ const Schedule = () => {
                 </div>
                 
                 <div className="p-6">
-                  {scheduledMeetings.length === 0 ? (
+                  {fetchingMeetings ? (
+                    <div className="text-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                      <p className="text-gray-500 mt-2">Loading meetings...</p>
+                    </div>
+                  ) : scheduledMeetings.length === 0 ? (
                     <div className="text-center py-8">
                       <MdCalendarToday className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                       <p className="text-gray-500">No scheduled meetings</p>
@@ -259,26 +387,32 @@ const Schedule = () => {
                     <div className="space-y-4">
                       {scheduledMeetings.map((meeting) => (
                         <div
-                          key={meeting.id}
+                          key={meeting._id}
                           className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
                         >
                           <div className="flex justify-between items-start mb-2">
-                            <h3 className="font-semibold text-gray-900 truncate">
+                            <h3 className="font-semibold text-gray-900 truncate flex-1">
                               {meeting.title}
                             </h3>
-                            <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">
+                            <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded ml-2">
                               Scheduled
                             </span>
                           </div>
                           
                           <p className="text-sm text-gray-600 mb-2">
-                            {formatDate(meeting.date)} at {meeting.time}
+                            {formatDate(meeting.scheduled_time)}
                           </p>
                           
                           <p className="text-sm text-gray-600 mb-3">
-                            Duration: {meeting.duration} min
-                            {meeting.participants && ` • ${meeting.participants} participants`}
+                            {formatTime(meeting.scheduled_time)} • {meeting.duration} min
+                            {meeting.max_participants && ` • Up to ${meeting.max_participants} participants`}
                           </p>
+
+                          {meeting.description && (
+                            <p className="text-sm text-gray-500 mb-3 line-clamp-2">
+                              {meeting.description}
+                            </p>
+                          )}
 
                           <div className="flex space-x-2">
                             <button
@@ -289,16 +423,16 @@ const Schedule = () => {
                               Start
                             </button>
                             <button
-                              onClick={() => copyMeetingLink(meeting.meetingId)}
+                              onClick={() => copyMeetingLink(meeting.room_id)}
                               className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-3 rounded text-sm transition-colors"
                             >
                               Copy Link
                             </button>
                             <button
-                              onClick={() => deleteScheduledMeeting(meeting.id)}
+                              onClick={() => deleteScheduledMeeting(meeting.room_id)}
                               className="bg-red-600 hover:bg-red-700 text-white py-2 px-3 rounded text-sm transition-colors"
                             >
-                              Delete
+                              <MdDelete className="w-4 h-4" />
                             </button>
                           </div>
                         </div>

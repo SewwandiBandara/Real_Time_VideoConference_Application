@@ -930,6 +930,172 @@ io.on('connection', (socket) => {
   });
 });
 
+
+// ==================== Scheduled meeting ===================== //
+
+// Schedule a meeting (create with scheduled status)
+app.post('/api/meetings/schedule', authenticateToken, async (req, res) => {
+  console.log('📅 Scheduling meeting:', req.body);
+
+  try {
+    const { title, description, scheduled_time, duration, max_participants } = req.body;
+
+    if (!title || !scheduled_time) {
+      return res.status(400).json({ error: 'Title and scheduled time are required' });
+    }
+
+    // Generate unique meeting ID
+    const roomId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
+    const meeting = await Meeting.create({
+      host_id: req.user._id,
+      room_id: roomId,
+      title,
+      description,
+      scheduled_time: new Date(scheduled_time),
+      duration: duration || 60,
+      max_participants: max_participants || 50,
+      status: 'scheduled'
+    });
+
+    console.log('✅ Meeting scheduled successfully with ID:', roomId);
+
+    res.status(201).json({
+      message: 'Meeting scheduled successfully',
+      meeting: {
+        id: meeting._id,
+        meeting_id: roomId,
+        room_id: roomId,
+        title: meeting.title,
+        description: meeting.description,
+        scheduled_time: meeting.scheduled_time,
+        duration: meeting.duration,
+        max_participants: meeting.max_participants,
+        status: meeting.status
+      }
+    });
+  } catch (error) {
+    console.error('❌ Schedule meeting error:', error);
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
+  }
+});
+
+// Get user's scheduled meetings
+app.get('/api/meetings/scheduled', authenticateToken, async (req, res) => {
+  try {
+    const meetings = await Meeting.find({
+      host_id: req.user._id,
+      status: 'scheduled',
+      scheduled_time: { $gt: new Date() } // Only future meetings
+    })
+      .sort({ scheduled_time: 1 })
+      .limit(20);
+
+    res.json({ meetings });
+  } catch (error) {
+    console.error('❌ Get scheduled meetings error:', error);
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
+  }
+});
+
+// Update scheduled meeting
+app.put('/api/meetings/schedule/:meetingId', authenticateToken, async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const { title, description, scheduled_time, duration, max_participants } = req.body;
+
+    const meeting = await Meeting.findOne({
+      room_id: meetingId,
+      host_id: req.user._id
+    });
+
+    if (!meeting) {
+      return res.status(404).json({ error: 'Meeting not found' });
+    }
+
+    // Update fields if provided
+    if (title) meeting.title = title;
+    if (description) meeting.description = description;
+    if (scheduled_time) meeting.scheduled_time = new Date(scheduled_time);
+    if (duration) meeting.duration = duration;
+    if (max_participants) meeting.max_participants = max_participants;
+
+    await meeting.save();
+
+    res.json({
+      message: 'Meeting updated successfully',
+      meeting: {
+        id: meeting._id,
+        meeting_id: meeting.room_id,
+        title: meeting.title,
+        description: meeting.description,
+        scheduled_time: meeting.scheduled_time,
+        duration: meeting.duration,
+        max_participants: meeting.max_participants,
+        status: meeting.status
+      }
+    });
+  } catch (error) {
+    console.error('❌ Update scheduled meeting error:', error);
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
+  }
+});
+
+// Delete scheduled meeting
+app.delete('/api/meetings/schedule/:meetingId', authenticateToken, async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+
+    const meeting = await Meeting.findOneAndDelete({
+      room_id: meetingId,
+      host_id: req.user._id,
+      status: 'scheduled'
+    });
+
+    if (!meeting) {
+      return res.status(404).json({ error: 'Meeting not found' });
+    }
+
+    res.json({ message: 'Meeting deleted successfully' });
+  } catch (error) {
+    console.error('❌ Delete scheduled meeting error:', error);
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
+  }
+});
+
+// Start a scheduled meeting (change status to ongoing)
+app.post('/api/meetings/schedule/:meetingId/start', authenticateToken, async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+
+    const meeting = await Meeting.findOne({
+      room_id: meetingId,
+      host_id: req.user._id,
+      status: 'scheduled'
+    });
+
+    if (!meeting) {
+      return res.status(404).json({ error: 'Scheduled meeting not found' });
+    }
+
+    meeting.status = 'ongoing';
+    await meeting.save();
+
+    res.json({
+      message: 'Meeting started successfully',
+      meeting: {
+        meeting_id: meeting.room_id,
+        title: meeting.title,
+        status: meeting.status
+      }
+    });
+  } catch (error) {
+    console.error('❌ Start scheduled meeting error:', error);
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
+  }
+});
+
+/////////////////////////////////////////////
 // Start server
 const PORT = process.env.PORT || 5001;
 server.listen(PORT, () => {

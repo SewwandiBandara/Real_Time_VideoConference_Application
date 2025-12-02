@@ -25,7 +25,7 @@
 //     setError('');
 
 //     try {
-//       const response = await fetch('http://localhost:5000/api/admin/login', {
+//       const response = await fetch('http://localhost:5001/api/admin/login', {
 //         method: 'POST',
 //         headers: {
 //           'Content-Type': 'application/json',
@@ -168,7 +168,7 @@ const AdminLogin = () => {
   try {
     console.log('🔄 Sending admin login request...');
     
-    // Use port 5001 instead of 5000
+    // Use port 5001 instead of 5001
     const API_BASE_URL = 'http://localhost:5001';
     const response = await fetch(`${API_BASE_URL}/api/admin/login`, {
       method: 'POST',
